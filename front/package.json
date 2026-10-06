@@ -1,0 +1,6 @@
+{
+  "name": "front",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

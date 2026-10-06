@@ -1,0 +1,21 @@
+services:
+  front:
+    build: ./front
+    ports:
+      - "3001:3000"
+    cpus: 0.5
+    mem_limit: 128m
+
+  back:
+    build: ./back
+    ports:
+      - "3002:3000"
+    cpus: 0.5
+    mem_limit: 128m
+
+  serveur-web:
+    build: ./serveur-web
+    ports:
+      - "3003:80"
+    cpus: 0.5
+    mem_limit: 128m

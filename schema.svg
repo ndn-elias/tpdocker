@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" width="960" height="600">
+  <defs>
+    <filter id="rough">
+      <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="3"/>
+      <feDisplacementMap in="SourceGraphic" scale="3"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10" fill="none" stroke="#3f8f4f" stroke-width="2" stroke-linecap="round"/>
+    </marker>
+  </defs>
+
+  <style>
+    text { font-family: "Segoe Print", "Comic Sans MS", "Bradley Hand", cursive; fill: #2b2b2b; text-anchor: middle; }
+    .title { font-size: 20px; }
+    .sub   { font-size: 15px; fill: #555; }
+    .green { font-size: 15px; fill: #3f8f4f; }
+    .blue  { font-size: 15px; fill: #2f6fb5; }
+    .frame { font-size: 15px; fill: #888; text-anchor: start; }
+  </style>
+
+  <rect width="960" height="600" fill="#ffffff"/>
+
+  <!-- Utilisateur -->
+  <g filter="url(#rough)">
+    <ellipse cx="480" cy="80" rx="175" ry="52" fill="#ededed" stroke="#2b2b2b" stroke-width="2.5"/>
+  </g>
+  <text x="480" y="74" class="title">Utilisateur</text>
+  <text x="480" y="100" class="sub">Navigateur (localhost)</text>
+
+  <!-- Cadre docker compose -->
+  <g filter="url(#rough)">
+    <rect x="25" y="215" width="910" height="365" rx="18" fill="none" stroke="#aaa" stroke-width="2" stroke-dasharray="10 8"/>
+  </g>
+  <text x="45" y="568" class="frame">docker compose</text>
+
+  <!-- Flèches -->
+  <g fill="none" stroke="#3f8f4f" stroke-width="2.5" stroke-linecap="round" marker-end="url(#arrow)" filter="url(#rough)">
+    <path d="M 365 118 Q 230 160 165 262"/>
+    <path d="M 480 134 L 480 262"/>
+    <path d="M 595 118 Q 730 160 795 262"/>
+  </g>
+  <text x="225" y="170" class="green">:3001</text>
+  <text x="530" y="200" class="green">:3002</text>
+  <text x="735" y="170" class="green">:3003</text>
+
+  <!-- Front -->
+  <g filter="url(#rough)">
+    <polygon points="40,330 160,270 280,330 160,390" fill="#ffffff" stroke="#2b2b2b" stroke-width="2.5"/>
+    <rect x="50" y="435" width="220" height="110" rx="16" fill="#ffffff" stroke="#2f6fb5" stroke-width="2.5"/>
+  </g>
+  <text x="160" y="326" class="title">Front</text>
+  <text x="160" y="350" class="sub">node:22-alpine</text>
+  <text x="160" y="470" class="blue">Affiche Hello World</text>
+  <text x="160" y="497" class="blue">port 3000</text>
+  <text x="160" y="524" class="blue">0.5 CPU · 128 Mo</text>
+
+  <!-- Back -->
+  <g filter="url(#rough)">
+    <polygon points="360,330 480,270 600,330 480,390" fill="#ffffff" stroke="#2b2b2b" stroke-width="2.5"/>
+    <rect x="370" y="435" width="220" height="110" rx="16" fill="#ffffff" stroke="#2f6fb5" stroke-width="2.5"/>
+  </g>
+  <text x="480" y="326" class="title">Back</text>
+  <text x="480" y="350" class="sub">node:22-alpine</text>
+  <text x="480" y="470" class="blue">Renvoie Hello World</text>
+  <text x="480" y="497" class="blue">port 3000</text>
+  <text x="480" y="524" class="blue">0.5 CPU · 128 Mo</text>
+
+  <!-- Serveur web -->
+  <g filter="url(#rough)">
+    <polygon points="680,330 800,270 920,330 800,390" fill="#ffffff" stroke="#2b2b2b" stroke-width="2.5"/>
+    <rect x="690" y="435" width="220" height="110" rx="16" fill="#ffffff" stroke="#2f6fb5" stroke-width="2.5"/>
+  </g>
+  <text x="800" y="326" class="title">Serveur web</text>
+  <text x="800" y="350" class="sub">nginx</text>
+  <text x="800" y="470" class="blue">Sert index.html</text>
+  <text x="800" y="497" class="blue">port 80</text>
+  <text x="800" y="524" class="blue">0.5 CPU · 128 Mo</text>
+
+  <!-- Liens losange -> description -->
+  <g stroke="#2b2b2b" stroke-width="2" stroke-dasharray="4 5" filter="url(#rough)">
+    <line x1="160" y1="392" x2="160" y2="433"/>
+    <line x1="480" y1="392" x2="480" y2="433"/>
+    <line x1="800" y1="392" x2="800" y2="433"/>
+  </g>
+</svg>
