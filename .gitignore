@@ -1,0 +1,4 @@
+# J'ai ignoré back/data car si je lance l'API sans Docker, elle y crée un reparations.json de test qui n'a rien à faire sur git
+back/data/
+# J'ai ignoré le .env car chaque garage a sa propre config (port, taille du PC), on pousse seulement .env.example
+.env

@@ -1,21 +1,96 @@
+# J'ai utilisé docker compose pour lancer les 3 parties de l'appli du garage moto en une seule commande, le matin à l'ouverture.
+# Les valeurs ${...} viennent du fichier .env, docker compose le lit tout seul. Ce qui est après ":-" est la valeur par défaut,
+# je l'ai mise pour que l'appli démarre quand même si le .env n'existe pas (par exemple juste après un git clone).
 services:
+
+  # J'ai fait un service front pour afficher la liste des réparations aux mécaniciens.
   front:
+    # J'ai mis build ./front pour que Docker construise l'image du front avec mon Dockerfile.
     build: ./front
-    ports:
-      - "3001:3000"
-    cpus: 0.5
-    mem_limit: 128m
+    # Je n'ai pas mis de "ports" car je veux que les mécaniciens passent par Nginx, pas directement par le front.
+    # J'ai passé au front seulement les variables dont il a besoin, prises dans le .env.
+    environment:
+      # Je passe le mode de Node.js pour pouvoir mettre "development" si je dois corriger un bug, sans reconstruire l'image.
+      NODE_ENV: ${NODE_ENV:-production}
+      # Je passe le port interne du front, c'est le même que celui que Nginx utilise pour le joindre.
+      PORT: ${APP_PORT:-3000}
+    # J'ai mis restart pour que la liste des réparations revienne toute seule si le conteneur plante en pleine journée.
+    restart: unless-stopped
+    # J'ai mis le front sur le réseau garage-network pour que Nginx puisse lui envoyer les mécaniciens.
+    networks:
+      - garage-network
+    # J'ai limité le CPU à 0.25 car mes benchmarks montrent plus de 1000 pages/s avec 10 mécaniciens en même temps :
+    # c'est largement assez pour le garage, et le PC de l'atelier garde sa puissance pour le reste.
+    cpus: ${FRONT_CPUS:-0.25}
+    # J'ai limité la RAM à 64 Mo car le front a eu un pic à 45 Mo pendant mes benchmarks, ça laisse de la marge
+    # sans prendre la mémoire du PC de l'atelier.
+    mem_limit: ${FRONT_MEM:-64m}
 
+  # J'ai fait un service back pour l'API qui gère les réparations du garage.
   back:
+    # J'ai mis build ./back pour que Docker construise l'image de l'API avec mon Dockerfile.
     build: ./back
-    ports:
-      - "3002:3000"
-    cpus: 0.5
-    mem_limit: 128m
+    # Je n'ai pas mis de "ports" car l'API contient les infos des clients donc personne ne doit y accéder sans passer par Nginx.
+    # J'ai passé à l'API seulement les variables dont elle a besoin, prises dans le .env.
+    # Je n'ai pas mis DATA_FILE dans le .env car le chemin doit rester dans le volume, sinon les réparations seraient perdues.
+    environment:
+      # Je passe le mode de Node.js pour pouvoir mettre "development" si je dois corriger un bug, sans reconstruire l'image.
+      NODE_ENV: ${NODE_ENV:-production}
+      # Je passe le port interne de l'API, c'est le même que celui que Nginx utilise pour la joindre.
+      PORT: ${APP_PORT:-3000}
+    # J'ai mis restart pour que l'API revienne toute seule si elle plante, sinon les mécaniciens ne voient plus leurs réparations.
+    restart: unless-stopped
+    # J'ai mis un volume pour stocker les réparations du garage, comme ça elles restent même si je supprime le conteneur.
+    # Le fichier reparations.json est dans ce volume (projet1_garage-data), pas dans mon dossier de projet.
+    # Pour le voir, il faut taper "docker compose exec back cat /app/data/reparations.json", ou Docker Desktop > Volumes > projet1_garage-data.
+    volumes:
+      - garage-data:/app/data
+    # J'ai mis le back sur le réseau garage-network pour que Nginx puisse lui envoyer les requêtes /api/.
+    networks:
+      - garage-network
+    # J'ai limité le CPU à 0.25 car mes benchmarks montrent plus de 1000 réponses/s avec 10 mécaniciens en même temps :
+    # c'est largement assez pour le garage, et le PC de l'atelier garde sa puissance pour le reste.
+    cpus: ${BACK_CPUS:-0.25}
+    # J'ai limité la RAM à 32 Mo car l'API a eu un pic à 14 Mo pendant mes benchmarks, ça laisse de la marge
+    # sans prendre la mémoire du PC de l'atelier.
+    mem_limit: ${BACK_MEM:-32m}
 
+  # J'ai fait un service serveur-web (Nginx) pour que les mécaniciens n'aient qu'une seule adresse à retenir.
   serveur-web:
+    # J'ai mis build ./serveur-web pour que Docker construise l'image Nginx avec ma config et ma page d'accueil.
     build: ./serveur-web
+    # J'ai ouvert seulement un port sur Nginx car c'est la seule porte d'entrée de l'appli pour les mécaniciens.
+    # Le port vient du .env (8080 par défaut) pour pouvoir le changer si un autre logiciel du garage l'utilise déjà.
     ports:
-      - "3003:80"
-    cpus: 0.5
-    mem_limit: 128m
+      - "${NGINX_PORT:-8080}:80"
+    # J'ai passé APP_PORT à Nginx pour qu'il sache sur quel port joindre le front et l'API (il l'écrit dans sa config au démarrage).
+    environment:
+      APP_PORT: ${APP_PORT:-3000}
+    # J'ai mis depends_on pour que Nginx attende que le front et l'API soient prêts, pour que le matin un mécanicien ne tombe pas sur une erreur.
+    depends_on:
+      front:
+        condition: service_healthy
+      back:
+        condition: service_healthy
+    # J'ai mis restart pour que l'entrée de l'appli revienne toute seule si Nginx plante en pleine journée.
+    restart: unless-stopped
+    # J'ai mis Nginx sur le réseau garage-network pour qu'il puisse parler au front et à l'API.
+    networks:
+      - garage-network
+    # J'ai limité le CPU à 0.25 car Nginx ne fait que transmettre les requêtes des mécaniciens, et pendant mes benchmarks
+    # il n'a jamais été le plus chargé des 3 conteneurs.
+    cpus: ${NGINX_CPUS:-0.25}
+    # J'ai limité la RAM à 32 Mo car Nginx a eu un pic à 12 Mo pendant mes benchmarks, ça laisse de la marge
+    # sans prendre la mémoire du PC de l'atelier.
+    mem_limit: ${NGINX_MEM:-32m}
+
+networks:
+  # J'ai créé un réseau privé pour que les 3 parties de l'appli se parlent avec leur nom (front, back) sans être ouvertes sur le PC de l'atelier.
+  garage-network:
+    # J'ai choisi bridge car mes 3 conteneurs tournent sur la même machine, le PC de l'atelier.
+    driver: bridge
+
+volumes:
+  # J'ai déclaré le volume garage-data pour garder les réparations même après un "docker compose down".
+  # Docker l'appelle projet1_garage-data (nom du dossier + nom du volume). Seul "docker compose down -v" efface les réparations.
+  garage-data:
