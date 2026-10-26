@@ -18,6 +18,8 @@ Il y a 3 conteneurs :
 - **Serveur web** : Nginx avec une configuration `nginx.conf` personnalisée et une page `index.html`
   statique (image `nginx:1.27-alpine`)
 - **Docker Compose** : pour lancer les 3 conteneurs ensemble
+- **Docker Swarm** : pour lancer plusieurs copies du front, de l'API et de Nginx, avec un **autoscaler** qui en
+  ajoute ou en enlève selon la charge (voir [Docker Swarm et autoscaling](#docker-swarm-et-autoscaling))
 
 Je n'ai utilisé aucune librairie en plus (pas de `npm install`).
 
@@ -87,6 +89,9 @@ seulement les variables dont il a besoin (avec `environment`).
 
 ```
 docker-compose.yml   -> lance les 3 conteneurs
+docker-stack.yml     -> lance l'appli avec Docker Swarm, avec l'autoscaler
+deploy-swarm.bat     -> charge le .env, construit les images et lance le stack Swarm
+.gitattributes       -> garde les fins de ligne Linux pour autoscale.sh (sinon il ne se lance pas)
 .env.example         -> modèle de configuration (à copier en .env)
 .env                 -> la configuration du garage (pas poussé sur git)
 benchmark.bat        -> le script de benchmark (à lancer depuis cmd)
@@ -102,6 +107,9 @@ serveur-web/
     Dockerfile
     nginx.conf       -> la config de Nginx (reverse proxy), avec ${APP_PORT} remplacé au démarrage
     index.html       -> la page d'accueil du garage
+autoscaler/
+    Dockerfile
+    autoscale.sh     -> le script qui ajoute ou enlève des copies selon le CPU
 ```
 
 ## Le code
@@ -254,3 +262,143 @@ de `node`.
   passent de ~90 ms à ~200 ms. Je garde de la marge pour les jours où le PC de l'atelier est chargé.
 - Avec Docker Desktop, un conteneur qui dépasse sa limite de RAM peut utiliser du swap (mémoire sur
   le disque) au lieu de planter : la limite sert surtout à protéger la mémoire du PC de l'atelier.
+
+## Docker Swarm et autoscaling
+
+Avec `docker compose`, il y a toujours un seul conteneur de chaque. Si beaucoup de mécaniciens
+utilisent l'appli en même temps, le front ou l'API arrive à sa limite de 0.25 CPU. Avec **Docker
+Swarm**, je peux lancer plusieurs copies (**replicas**) du même service, et Swarm répartit les
+requêtes entre elles. L'**autoscaler** surveille le CPU et change le nombre de copies tout seul.
+
+Je garde `docker-compose.yml` pour le développement, et `docker-stack.yml` pour le PC de l'atelier.
+
+### Lancer l'appli avec Swarm
+
+Depuis cmd, dans le dossier du projet :
+
+```bash
+deploy-swarm.bat
+```
+
+Le script :
+
+1. charge les variables du `.env` (car `docker stack deploy` ne lit pas le `.env` tout seul,
+   contrairement à `docker compose`)
+2. active Swarm s'il ne l'est pas (`docker swarm init`, le PC devient le seul nœud, un manager)
+3. construit les images avec `docker compose -f docker-stack.yml build` (Swarm ne sait pas
+   construire d'images)
+4. lance le stack `garage` avec `docker stack deploy`
+
+L'appli est sur la même adresse : http://localhost:8080. Commandes utiles :
+
+```bash
+docker service ls
+docker service logs -f garage_autoscaler
+docker stack rm garage
+```
+
+Pour quitter complètement Swarm : `docker swarm leave --force`.
+
+### Ce qui change par rapport à docker compose
+
+| docker-compose.yml | docker-stack.yml (Swarm) | Pourquoi |
+|---|---|---|
+| `build` | `image` (+ `build` pour `docker compose build`) | Swarm lance des copies d'une image déjà construite |
+| `restart: unless-stopped` | `deploy.restart_policy` | En Swarm, tout ce qui concerne le lancement va dans `deploy` |
+| `cpus`, `mem_limit` | `deploy.resources.limits` | Mêmes valeurs (0.25 CPU), l'autoscaler s'en sert pour calculer la charge |
+| `depends_on` | rien | Swarm ignore `depends_on`, mais il relance Nginx s'il démarre trop tôt |
+| réseau `bridge` | réseau `overlay` | Le réseau de Swarm, il marche même avec plusieurs PC |
+| `ports: "8080:80"` | `ports` en mode `ingress` | Le routing mesh de Swarm : le port 8080 répond même avec plusieurs copies |
+| volume `projet1_garage-data` | volume `garage_garage-data` | Le nom du stack remplace le nom du dossier |
+
+En plus :
+
+- `deploy.replicas: 1` : chaque service démarre avec une copie, l'autoscaler en ajoute si besoin
+- `deploy.resources.reservations` : Swarm ne lance une copie que s'il reste de la place sur le PC
+- `deploy.update_config` avec `order: start-first` : lors d'une mise à jour, la nouvelle version
+  démarre avant que l'ancienne s'arrête, donc pas de coupure pour les mécaniciens
+- `hostname: "{{.Service.Name}}-{{.Task.Slot}}"` : un modèle Swarm, chaque copie a son nom
+  (`garage_front-1`, `garage_front-2`...). La page `/app/` affiche quelle copie du front et quelle
+  copie de l'API ont répondu
+- Nginx écrit toujours `http://front:3000` : en Swarm, `front` est une adresse virtuelle (VIP) et
+  Swarm répartit les requêtes entre toutes les copies, Nginx n'a pas besoin de les connaître
+
+### L'autoscaler
+
+C'est un petit conteneur (`alpine` + client Docker) qui lance `autoscaler/autoscale.sh`. Il a accès
+au socket Docker (`/var/run/docker.sock`), donc il tourne seulement sur le manager, sur aucun réseau
+de l'appli et sans port ouvert. Toutes les 15 secondes, pour le front, l'API et Nginx :
+
+1. il lit le CPU de chaque copie **prête** (`healthy`) avec `docker stats`. Une copie qui démarre
+   est ignorée : au lancement, le front (avec `npm`) utilise tout son CPU pendant quelques secondes,
+   et sans ce filtre l'autoscaler ajoutait une copie dès le démarrage du stack
+2. il fait la moyenne et la ramène à la limite du service : `docker stats` donne le CPU en % d'un
+   cœur, donc une copie à fond avec 0.25 CPU affiche 25 %, ce qui fait **100 % de sa limite**
+3. au-dessus de **80 %** il ajoute une copie, en dessous de **20 %** il en enlève une
+   (`docker service scale`), entre **1 et 4 copies**
+4. après un changement, il attend **60 secondes** avant de toucher à nouveau ce service, le temps que
+   la nouvelle copie démarre et prenne sa part des requêtes
+
+Toutes ces valeurs sont dans le `.env` (`MIN_REPLICAS`, `MAX_REPLICAS`, `CPU_HAUT`, `CPU_BAS`,
+`INTERVALLE`, `COOLDOWN`, `AUTOSCALE_SERVICES`).
+
+Je me suis basé sur l'exemple du cours, en changeant :
+
+- **le calcul du CPU** : l'exemple additionnait le CPU de toutes les copies et le comparait à 80 %.
+  Avec une limite de 0.25 CPU, un conteneur ne dépasse jamais 25 %, donc il n'aurait jamais ajouté
+  de copie. Et plus il y a de copies, plus la somme monte, donc il n'en aurait jamais enlevé
+- **une seule copie de l'autoscaler** (au lieu de `global`) pour que deux autoscalers ne changent
+  jamais le nombre de copies en même temps
+- **le temps d'attente** après un changement, pour ne pas ajouter des copies en boucle
+- **seulement les copies prêtes** (`healthy`) sont mesurées, pour ne pas réagir au pic du démarrage
+- **Nginx est aussi autoscalé** : en testant, c'est lui qui était à fond le premier (voir plus bas)
+
+Limites : `docker stats` ne voit que les conteneurs du PC où tourne l'autoscaler, et le volume des
+réparations est sur ce PC. C'est suffisant pour le garage qui n'a qu'un PC. Avec plusieurs PC dans
+le Swarm, il faudrait un stockage partagé (NFS par exemple) et un outil de mesure qui voit tous les
+nœuds.
+
+### Voir l'autoscaling en marche
+
+Lancer une grosse charge sur le stack (le 3e paramètre `garage` branche le benchmark sur le réseau
+du stack Swarm) :
+
+```bash
+benchmark.bat 100000 50 garage
+```
+
+Dans un autre terminal, suivre l'autoscaler et le nombre de copies :
+
+```bash
+docker service logs -f garage_autoscaler
+docker service ls
+```
+
+Quand la charge s'arrête, l'autoscaler redescend d'une copie par minute jusqu'à 1.
+
+### Mon test de l'autoscaler
+
+J'ai lancé 2 benchmarks en même temps (50 mécaniciens sur `/api/reparations` et 50 sur `/app/`,
+400 000 requêtes chacun), soit 100 mécaniciens en même temps pendant environ 8 minutes :
+
+| Heure | Ce qui s'est passé |
+|---|---|
+| 10:15 | Lancement du stack : 1 copie de chaque, l'autoscaler attend que les copies soient prêtes |
+| 10:17 | Nginx à **101 %** de sa limite alors que le front et l'API sont à ~30 % : Nginx passe à 2 copies |
+| 10:19 | Nginx passe à 3 copies, le front à 2 copies |
+| 10:21 | Nginx passe à 4 copies (le maximum), puis l'API à 2 copies |
+| 10:25 | La charge sur `/app/` se termine : le front redescend à 1 copie |
+| 10:26 | Fin de la charge : l'API redescend à 1, Nginx redescend d'une copie par minute |
+| 10:29 | Retour à 1 copie de chaque |
+
+Ce que j'en conclus :
+
+- **Nginx est le premier à saturer** : toutes les requêtes passent par lui. C'est pour ça que j'ai
+  ajouté `serveur-web` aux services de l'autoscaler. Mes premiers benchmarks (un seul chemin à la
+  fois, 10 mécaniciens) ne le montraient pas
+- **La répartition marche par connexion** : les connexions déjà ouvertes avant l'ajout d'une copie
+  restent sur l'ancienne copie (l'équilibreur de Swarm, IPVS, garde les connexions qu'il connaît).
+  Les nouveaux mécaniciens qui se connectent sont bien répartis sur toutes les copies
+- **Au démarrage**, sans le filtre `healthy`, l'autoscaler ajoutait une copie du front pour rien car
+  `npm` utilise tout le CPU pendant quelques secondes au lancement
+

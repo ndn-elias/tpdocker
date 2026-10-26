@@ -1,0 +1,5 @@
+# J'ai forcé les fins de ligne Linux (LF) pour les scripts shell car ils tournent dans un conteneur Linux :
+# avec les fins de ligne Windows (CRLF), autoscale.sh ne se lancerait pas.
+*.sh text eol=lf
+# Et les fins de ligne Windows (CRLF) pour les .bat, car cmd peut mal lire un .bat avec des fins de ligne Linux.
+*.bat text eol=crlf

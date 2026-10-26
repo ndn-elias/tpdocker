@@ -3,6 +3,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 
 // Le port et le chemin du fichier viennent des variables d'environnement (définies dans le Dockerfile)
 const PORT = process.env.PORT || 3000;
@@ -22,6 +23,8 @@ http.createServer((req, res) => {
   // Pour GET /api/reparations, on lit le fichier JSON et on renvoie les réparations
   if (req.url === "/api/reparations") {
     res.setHeader("Content-Type", "application/json");
+    // Avec Swarm, il peut y avoir plusieurs copies de l'API : on renvoie le nom de la copie qui a répondu
+    res.setHeader("X-Replique", os.hostname());
     res.end(fs.readFileSync(DATA_FILE));
     return;
   }

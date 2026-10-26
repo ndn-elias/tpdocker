@@ -1,0 +1,165 @@
+# J'ai fait ce fichier pour lancer l'appli du garage moto avec Docker Swarm au lieu de docker compose :
+# Swarm peut lancer plusieurs copies (replicas) du front et de l'API, répartir les mécaniciens entre elles,
+# et avec l'autoscaler en ajouter ou en enlever tout seul selon la charge.
+# Je garde docker-compose.yml pour le développement, ce fichier sert pour le PC de l'atelier.
+#
+# Pour le lancer : deploy-swarm.bat (il lit le .env, construit les images puis fait "docker stack deploy").
+# Attention : "docker stack deploy" ne lit PAS le .env tout seul (contrairement à docker compose), c'est
+# deploy-swarm.bat qui charge ses variables. Sans lui, ce sont les valeurs après ":-" qui sont utilisées.
+#
+# Ce que Swarm ignore par rapport à docker-compose.yml :
+# - "build" : Swarm ne construit pas d'images, il faut les construire avant (deploy-swarm.bat le fait avec docker compose build)
+# - "depends_on" : Swarm relance tout seul un service qui démarre trop tôt (grâce à restart_policy)
+# - "restart", "cpus", "mem_limit" : en Swarm, tout ça se met dans la partie "deploy"
+services:
+
+  # J'ai fait un service front pour afficher la liste des réparations aux mécaniciens.
+  front:
+    # J'ai mis "image" en plus de "build" car Swarm a besoin d'une image déjà construite pour lancer les copies.
+    image: garage-front:latest
+    build: ./front
+    # J'ai mis un hostname avec un modèle Swarm : chaque copie a son propre nom (garage_front-1, garage_front-2...),
+    # et le front l'affiche, comme ça je vois quelle copie m'a répondu quand il y en a plusieurs.
+    hostname: "{{.Service.Name}}-{{.Task.Slot}}"
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${APP_PORT:-3000}
+    networks:
+      - garage-network
+    deploy:
+      # Je démarre avec une seule copie, c'est l'autoscaler qui en ajoute s'il y a beaucoup de mécaniciens.
+      replicas: 1
+      resources:
+        # Je garde les mêmes limites que dans docker-compose.yml, choisies avec mes benchmarks.
+        # L'autoscaler calcule la charge par rapport à cette limite CPU.
+        limits:
+          cpus: "${FRONT_CPUS:-0.25}"
+          memory: ${FRONT_MEM:-64m}
+        # J'ai mis une réservation pour que Swarm ne lance une nouvelle copie que s'il reste assez de place sur le PC.
+        reservations:
+          cpus: "0.05"
+          memory: 32m
+      # J'ai mis "any" pour que la liste des réparations revienne toute seule si le conteneur plante, comme restart: unless-stopped.
+      restart_policy:
+        condition: any
+      # J'ai mis "start-first" pour que, lors d'une mise à jour, la nouvelle version démarre avant que l'ancienne
+      # s'arrête : les mécaniciens ne voient jamais de coupure.
+      update_config:
+        parallelism: 1
+        delay: 5s
+        order: start-first
+        failure_action: rollback
+
+  # J'ai fait un service back pour l'API qui gère les réparations du garage.
+  back:
+    image: garage-back:latest
+    build: ./back
+    hostname: "{{.Service.Name}}-{{.Task.Slot}}"
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${APP_PORT:-3000}
+    # Le volume s'appelle garage_garage-data en Swarm (nom du stack + nom du volume).
+    # Toutes les copies de l'API sur le PC de l'atelier lisent le même volume, donc elles voient les mêmes réparations.
+    # Si un jour le garage avait plusieurs PC dans le Swarm, il faudrait un stockage partagé (NFS par exemple),
+    # car chaque PC aurait son propre volume.
+    volumes:
+      - garage-data:/app/data
+    networks:
+      - garage-network
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "${BACK_CPUS:-0.25}"
+          memory: ${BACK_MEM:-32m}
+        reservations:
+          cpus: "0.05"
+          memory: 16m
+      restart_policy:
+        condition: any
+      update_config:
+        parallelism: 1
+        delay: 5s
+        order: start-first
+        failure_action: rollback
+
+  # J'ai fait un service serveur-web (Nginx) pour que les mécaniciens n'aient qu'une seule adresse à retenir.
+  serveur-web:
+    image: garage-serveur-web:latest
+    build: ./serveur-web
+    # J'ai utilisé l'écriture longue pour le port pour montrer le mode "ingress" : c'est le routing mesh de Swarm,
+    # le port 8080 répond sur le PC même si Nginx a plusieurs copies.
+    ports:
+      - target: 80
+        published: ${NGINX_PORT:-8080}
+        protocol: tcp
+        mode: ingress
+    environment:
+      APP_PORT: ${APP_PORT:-3000}
+    networks:
+      - garage-network
+    deploy:
+      # Je démarre avec une copie de Nginx, l'autoscaler en ajoute aussi : avec beaucoup de mécaniciens,
+      # c'est lui qui est à fond le premier car toutes les requêtes passent par lui.
+      # Nginx n'a pas besoin de connaître les copies du front et de l'API : en écrivant http://front:3000,
+      # il tombe sur l'adresse virtuelle (VIP) du service, et Swarm répartit les requêtes entre les copies.
+      replicas: 1
+      resources:
+        limits:
+          cpus: "${NGINX_CPUS:-0.25}"
+          memory: ${NGINX_MEM:-32m}
+      # Si Nginx démarre avant le front ou l'API, il peut planter : Swarm le relance tout seul, ça remplace depends_on.
+      restart_policy:
+        condition: any
+      update_config:
+        parallelism: 1
+        delay: 5s
+        order: start-first
+        failure_action: rollback
+
+  # J'ai ajouté l'autoscaler pour ajouter des copies du front, de l'API et de Nginx quand ils sont trop chargés,
+  # et les enlever quand c'est calme (voir autoscaler/autoscale.sh).
+  autoscaler:
+    image: garage-autoscaler:latest
+    build: ./autoscaler
+    environment:
+      # Le nom du stack doit être le même que celui donné à "docker stack deploy" dans deploy-swarm.bat.
+      STACK_NAME: ${STACK_NAME:-garage}
+      SERVICES: ${AUTOSCALE_SERVICES:-front back serveur-web}
+      MIN_REPLICAS: ${MIN_REPLICAS:-1}
+      MAX_REPLICAS: ${MAX_REPLICAS:-4}
+      CPU_HAUT: ${CPU_HAUT:-80}
+      CPU_BAS: ${CPU_BAS:-20}
+      INTERVALLE: ${INTERVALLE:-15}
+      COOLDOWN: ${COOLDOWN:-60}
+    # J'ai monté le socket Docker pour que le script puisse lire le CPU des conteneurs et changer le nombre de copies.
+    # Ça donne tous les droits sur Docker, c'est pour ça que l'autoscaler n'est sur aucun réseau de l'appli
+    # et n'a aucun port ouvert : personne ne peut lui parler.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      # J'ai mis une seule copie (et pas "global") pour qu'il n'y ait jamais deux autoscalers qui changent
+      # le nombre de copies en même temps.
+      replicas: 1
+      placement:
+        constraints:
+          # Seul un nœud manager peut changer le nombre de copies d'un service, donc l'autoscaler doit tourner dessus.
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 32m
+      restart_policy:
+        condition: any
+
+networks:
+  # J'ai choisi overlay car c'est le réseau de Swarm : les copies se parlent par leur nom (front, back)
+  # même si un jour elles sont sur plusieurs PC.
+  garage-network:
+    driver: overlay
+    # J'ai mis attachable pour pouvoir brancher le conteneur du benchmark sur ce réseau (benchmark.bat ... garage).
+    attachable: true
+
+volumes:
+  # J'ai déclaré le volume garage-data pour garder les réparations même après un "docker stack rm".
+  garage-data:
