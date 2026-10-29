@@ -10,6 +10,11 @@ Il y a 3 conteneurs :
 - **back** : l'API qui renvoie les réparations (stockées dans un fichier JSON)
 - **serveur-web** : Nginx, le seul point d'entrée, qui redirige vers le front et le back
 
+Et 2 conteneurs d'outillage (orchestration et CI), comme demandé dans la consigne supplémentaire :
+
+- **autoscaler** : ajoute ou enlève des copies du front, de l'API et de Nginx selon le CPU (avec Swarm)
+- **lint** : vérifie les Dockerfiles, le script de l'autoscaler et le code Node.js (voir [Le lint](#le-lint-ci))
+
 ## Technologies utilisées
 
 - **Front et back** : Node.js avec le module `http` natif, sans aucune dépendance (image `node:22-alpine`)
@@ -20,6 +25,8 @@ Il y a 3 conteneurs :
 - **Docker Compose** : pour lancer les 3 conteneurs ensemble
 - **Docker Swarm** : pour lancer plusieurs copies du front, de l'API et de Nginx, avec un **autoscaler** qui en
   ajoute ou en enlève selon la charge (voir [Docker Swarm et autoscaling](#docker-swarm-et-autoscaling))
+- **Lint** : hadolint (Dockerfiles), shellcheck (scripts shell) et eslint (Node.js), dans un conteneur
+  à part
 
 Je n'ai utilisé aucune librairie en plus (pas de `npm install`).
 
@@ -80,10 +87,23 @@ Le mécanicien passe uniquement par Nginx (port 8080). Nginx envoie :
 - `/api/` vers le conteneur back
 
 Le front et le back ne sont pas accessibles directement depuis le PC, seulement par le réseau
-interne `garage-network`.
+interne `garage-network` (`bridge` avec docker compose, `overlay` avec Swarm). Le back écrit et lit
+ses réparations dans le volume `garage-data`.
 
-En orange, le fichier `.env` : docker compose le lit au lancement, puis passe à chaque conteneur
-seulement les variables dont il a besoin (avec `environment`).
+Les couleurs des flèches :
+
+- **vert** : les communications (le mécanicien vers Nginx, Nginx vers le front et le back, le back
+  vers le volume, le projet vers le lint)
+- **orange** : le fichier `.env`, que docker compose (ou `deploy-swarm.bat`) lit au lancement, puis
+  passe à chaque conteneur seulement les variables dont il a besoin (avec `environment`)
+- **violet** : l'autoscaler. Il parle au moteur Docker par le socket `docker.sock`, lit le CPU des
+  copies (`docker stats`) et change leur nombre (`docker service scale`). Il n'est sur aucun réseau
+  de l'appli
+- **les cartes décalées** derrière le front, le back et Nginx : les copies que Swarm peut lancer
+  (de 1 à 4)
+
+En bas, le conteneur de lint : il n'est pas dans le stack, il se lance à la demande, lit le projet
+en lecture seule (`:ro`) puis s'arrête.
 
 ## Les fichiers du projet
 
@@ -98,7 +118,7 @@ benchmark.bat        -> le script de benchmark (à lancer depuis cmd)
 schema.svg           -> le schéma
 front/
     Dockerfile
-    package.json     -> contient la commande "npm start"
+    package.json     -> contient la commande "npm start" (pour lancer le front à la main, hors Docker)
     server.js        -> la page avec la liste des réparations
 back/
     Dockerfile
@@ -110,6 +130,11 @@ serveur-web/
 autoscaler/
     Dockerfile
     autoscale.sh     -> le script qui ajoute ou enlève des copies selon le CPU
+lint/
+    Dockerfile       -> hadolint + shellcheck + eslint
+    lint.sh          -> lance les 3 outils et renvoie 0 (tout bon) ou 1 (erreur)
+    hadolint.yaml    -> les règles de hadolint
+    eslint.config.js -> les règles d'eslint
 ```
 
 ## Le code
@@ -154,6 +179,11 @@ par rapport à la version Hello World de base :
 - **`USER node`** : l'appli ne tourne pas en root (l'utilisateur `node` est déjà dans l'image)
 - **`COPY --chown=node:node`** : les fichiers appartiennent à l'utilisateur `node`
 - **`COPY` fichier par fichier** : on copie seulement ce qui est utile, pas tout le dossier
+- **`CMD` en forme exec** (`["node", "server.js"]`) : node est le processus 1 du conteneur et reçoit
+  directement le signal d'arrêt (voir [Arrêt propre](#arrêt-propre-des-conteneurs-sigterm)). Le front
+  utilisait avant `npm start`, qui ne transmet pas bien SIGTERM à node
+- **`STOPSIGNAL`** : le signal que Docker envoie à l'arrêt (`SIGTERM` pour Node et l'autoscaler,
+  `SIGQUIT` pour Nginx)
 - **`VOLUME`** (back) : le dossier `/app/data` où est stocké `reparations.json`
 - **`HEALTHCHECK`** : Docker vérifie régulièrement que le conteneur répond, avec `wget` qui est
   déjà dans alpine (pas de dépendance en plus)
@@ -177,6 +207,45 @@ En plus :
   sont pas perdues quand on supprime le conteneur
 - `depends_on` avec `condition: service_healthy` : Nginx démarre seulement quand le front et le
   back sont prêts (grâce au healthcheck)
+- `stop_grace_period: 10s` : le temps que Docker attend après le signal d'arrêt avant de tuer le
+  conteneur (voir [Arrêt propre](#arrêt-propre-des-conteneurs-sigterm))
+- le service `lint` (profil `lint`) : voir [Le lint](#le-lint-ci)
+
+## Arrêt propre des conteneurs (SIGTERM)
+
+Quand on fait `docker compose stop`, `docker compose down` ou `docker stack rm` (ou quand l'autoscaler
+enlève une copie), Docker envoie un signal au processus 1 de chaque conteneur, attend
+`stop_grace_period` (10 s), puis le tue (`SIGKILL`) s'il est encore là. Un processus qui n'attrape
+pas le signal n'a rien de prévu à l'arrêt : il est tué d'un coup (code de sortie 137 pour Node), et
+les requêtes en cours sont coupées. Je l'ai vérifié : un serveur Node sans handler est sorti avec le
+code 137, alors que le front et l'API de ce projet sortent avec le code 0.
+
+| Conteneur | Signal | Comment c'est géré |
+|---|---|---|
+| front | `SIGTERM` | `server.js` attrape `SIGTERM` et `SIGINT` : `server.close()` arrête d'accepter des connexions, les requêtes en cours se terminent, puis `process.exit(0)` |
+| back | `SIGTERM` | Pareil que le front |
+| serveur-web | `SIGQUIT` | Nginx s'arrête « en douceur » avec ce signal (il finit les requêtes en cours). C'est le `STOPSIGNAL` de l'image nginx, je l'ai écrit dans mon Dockerfile pour que ce soit clair |
+| autoscaler | `SIGTERM` | `autoscale.sh` a un `trap` qui affiche un message et quitte. Sans `trap`, le script n'a rien de prévu à l'arrêt : il est interrompu n'importe où et sort avec un code différent de 0 |
+
+Ce que j'ai changé pour que ça marche :
+
+- **les `CMD` sont en forme exec** (avec des crochets) : sans shell entre Docker et le programme, le
+  signal arrive directement à node (ou au script)
+- **le front n'utilise plus `npm start`** : `npm` lance node comme un sous-processus et ne lui
+  transmet pas bien `SIGTERM`. Le `CMD` est maintenant `["node", "server.js"]`
+- **l'autoscaler attend avec `sleep ... & wait $!`** au lieu d'un simple `sleep` : un `trap` ne
+  s'exécute pas tant qu'une commande tourne au premier plan, alors que `wait` est interrompu par le
+  signal
+- **`stop_grace_period: 10s`** est écrit dans `docker-compose.yml` et `docker-stack.yml` : c'est la
+  limite avant le `SIGKILL`. Les conteneurs quittent en moins d'une seconde, 10 s est une sécurité
+
+Pour le vérifier (conteneurs lancés), le message de `server.js` apparaît dans les logs et l'arrêt est
+rapide :
+
+```bash
+docker compose stop
+docker compose logs front back
+```
 
 ## Le fichier .env et le passage des variables
 
@@ -189,6 +258,7 @@ Toutes les valeurs qui peuvent changer d'un garage à l'autre sont dans le fichi
 | `NODE_ENV` | `production` | Passer en `development` pour corriger un bug, sans reconstruire les images |
 | `FRONT_CPUS`, `BACK_CPUS`, `NGINX_CPUS` | `0.25` | Adapter les limites à la taille du PC de l'atelier |
 | `FRONT_MEM`, `BACK_MEM`, `NGINX_MEM` | `64m`, `32m`, `32m` | Adapter les limites à la taille du PC de l'atelier |
+| `LINT_CPUS`, `LINT_MEM` | `0.5`, `256m` | Les limites du conteneur de lint (eslint prend plus de ressources que l'appli, mais seulement quelques secondes) |
 
 Comment les variables arrivent jusqu'aux conteneurs :
 
@@ -216,6 +286,56 @@ docker compose exec back printenv PORT
 docker compose exec serveur-web grep proxy_pass /etc/nginx/conf.d/default.conf
 ```
 
+## Le lint (CI)
+
+Le conteneur `lint` vérifie le projet avant de le lancer, pour trouver les erreurs sans démarrer
+l'appli. Il lance 3 outils :
+
+| Outil | Ce qu'il vérifie | Règles |
+|---|---|---|
+| **hadolint** | les Dockerfiles (`*/Dockerfile`) : versions fixées, bonnes pratiques | `lint/hadolint.yaml` |
+| **shellcheck** | les scripts shell (`autoscale.sh`, `lint.sh`) : guillemets oubliés, erreurs classiques | par défaut, en mode `sh` |
+| **eslint** | le code Node.js (`front/server.js`, `back/server.js`) : variable inconnue, variable inutilisée, `var`, `==` | `lint/eslint.config.js` |
+
+Pour le lancer, depuis le dossier du projet :
+
+```bash
+docker compose run --rm lint
+```
+
+Le script `lint/lint.sh` lance les 3 outils (sans s'arrêter à la première erreur, pour tout voir
+d'un coup) et le conteneur sort avec le code **0** si tout est bon, **1** sinon. Un script ou une
+CI peut donc s'en servir pour bloquer un déploiement.
+
+### Les choix de l'image
+
+- **`node:22-alpine`** : eslint est un outil Node.js, et c'est la même base que le front et l'API
+- **`apk add shellcheck`** : shellcheck est dans les paquets alpine. `--no-cache` évite de garder la
+  liste des paquets dans l'image
+- **hadolint téléchargé avec `wget`** : il n'est pas dans les paquets alpine, je prends le binaire
+  de la version 2.12.0 sur GitHub (le bon fichier selon le processeur : Intel/AMD ou ARM, avec
+  `uname -m`) et je le rends exécutable avec `chmod +x`
+- **`npm install -g eslint@9.17.0`** : installé en global pour être dans le PATH, version fixée car
+  eslint change son format de configuration d'une version majeure à l'autre. Je vide ensuite le
+  cache npm pour alléger l'image
+- **règles dans `/etc/lint`**, hors du projet : elles ne sont pas mélangées avec le code vérifié.
+  Pour eslint, j'ai écrit la config à la main (pas de paquet de règles en plus)
+- **`USER node`** : le lint n'a pas besoin d'être root, il lit seulement des fichiers
+- **`CMD ["lint.sh"]`** : le lint démarre dès qu'on lance le conteneur, en forme exec
+
+### Ce que j'ai mis dans le compose
+
+- `profiles: ["lint"]` : `docker compose up` ne le démarre pas (ce n'est pas un service qui tourne en
+  continu), il faut le lancer avec `docker compose run --rm lint`
+- `volumes: ./:/src:ro` : le projet est monté en **lecture seule** (`ro`), le lint ne peut rien modifier
+- `network_mode: none` : il n'a pas de réseau, il lit seulement des fichiers
+- `restart: "no"` : quand le contrôle est fini, il reste arrêté
+- `cpus` et `mem_limit` (`LINT_CPUS`, `LINT_MEM` du `.env`, **0.5 CPU et 256 Mo**) : plus que pour
+  l'appli car eslint (Node) consomme plus, mais seulement quelques secondes
+
+Le lint n'est que dans `docker-compose.yml`, pas dans `docker-stack.yml` : Swarm relance tout ce qui
+s'arrête, alors qu'un lint doit s'arrêter une fois fini.
+
 ## Benchmarks et limites de ressources
 
 Pour choisir les limites CPU et RAM, j'ai mesuré ce que consomme chaque conteneur avec
@@ -239,8 +359,9 @@ Le premier nombre est le nombre de requêtes, le deuxième le nombre de mécanic
 | back | 0 % | 9 Mo |
 | serveur-web | 0 % | 10 Mo |
 
-Le front prend plus de RAM car il est lancé avec `npm start` : il y a le processus `npm` en plus
-de `node`.
+Le front prenait plus de RAM car il était lancé avec `npm start` : il y avait le processus `npm` en
+plus de `node`. Ces mesures datent de cette version. Depuis, le front est lancé directement avec
+`node` (pour gérer SIGTERM), donc il consomme un peu moins : les limites choisies restent valables.
 
 ### Pendant la charge
 

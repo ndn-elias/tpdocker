@@ -20,4 +20,9 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -qO- http://127.0.0.1/ || exit 1
 
-# Je n'ai pas mis de CMD car l'image Nginx démarre déjà le serveur toute seule.
+# J'ai mis STOPSIGNAL SIGQUIT car Nginx s'arrête "en douceur" avec ce signal : il finit les requêtes en cours puis quitte
+# (avec SIGTERM il coupe tout de suite). L'image nginx le fait déjà, je l'écris pour que ce soit clair.
+STOPSIGNAL SIGQUIT
+
+# Je n'ai pas mis de CMD car l'image Nginx démarre déjà le serveur toute seule : son entrypoint lance nginx avec "exec",
+# donc nginx est le processus 1 du conteneur et reçoit directement le signal d'arrêt.

@@ -26,6 +26,9 @@ services:
       PORT: ${APP_PORT:-3000}
     networks:
       - garage-network
+    # J'ai mis stop_grace_period pour dire combien de temps Swarm attend après SIGTERM avant de tuer la copie (SIGKILL),
+    # par exemple quand l'autoscaler enlève une copie ou lors d'une mise à jour. Le front quitte en moins d'une seconde.
+    stop_grace_period: 10s
     deploy:
       # Je démarre avec une seule copie, c'est l'autoscaler qui en ajoute s'il y a beaucoup de mécaniciens.
       replicas: 1
@@ -66,6 +69,8 @@ services:
       - garage-data:/app/data
     networks:
       - garage-network
+    # Même chose que le front : 10 s maximum après SIGTERM, l'API quitte en moins d'une seconde.
+    stop_grace_period: 10s
     deploy:
       replicas: 1
       resources:
@@ -98,6 +103,8 @@ services:
       APP_PORT: ${APP_PORT:-3000}
     networks:
       - garage-network
+    # Swarm envoie SIGQUIT à Nginx (STOPSIGNAL du Dockerfile) : il finit les requêtes en cours puis quitte, 10 s maximum.
+    stop_grace_period: 10s
     deploy:
       # Je démarre avec une copie de Nginx, l'autoscaler en ajoute aussi : avec beaucoup de mécaniciens,
       # c'est lui qui est à fond le premier car toutes les requêtes passent par lui.
@@ -137,6 +144,8 @@ services:
     # et n'a aucun port ouvert : personne ne peut lui parler.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    # autoscale.sh attrape SIGTERM avec un trap et quitte tout de suite, 10 s c'est donc seulement la limite avant le SIGKILL.
+    stop_grace_period: 10s
     deploy:
       # J'ai mis une seule copie (et pas "global") pour qu'il n'y ait jamais deux autoscalers qui changent
       # le nombre de copies en même temps.

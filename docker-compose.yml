@@ -16,6 +16,9 @@ services:
       PORT: ${APP_PORT:-3000}
     # J'ai mis restart pour que la liste des réparations revienne toute seule si le conteneur plante en pleine journée.
     restart: unless-stopped
+    # J'ai mis stop_grace_period pour dire combien de temps Docker attend après SIGTERM avant de tuer le conteneur (SIGKILL).
+    # Le front quitte en moins d'une seconde (il attrape SIGTERM dans server.js), 10 s c'est donc une sécurité, pas une attente normale.
+    stop_grace_period: 10s
     # J'ai mis le front sur le réseau garage-network pour que Nginx puisse lui envoyer les mécaniciens.
     networks:
       - garage-network
@@ -40,6 +43,9 @@ services:
       PORT: ${APP_PORT:-3000}
     # J'ai mis restart pour que l'API revienne toute seule si elle plante, sinon les mécaniciens ne voient plus leurs réparations.
     restart: unless-stopped
+    # J'ai mis stop_grace_period pour laisser 10 s à l'API pour finir ses requêtes en cours après SIGTERM, avant le SIGKILL.
+    # Elle attrape SIGTERM dans server.js, donc elle quitte en moins d'une seconde.
+    stop_grace_period: 10s
     # J'ai mis un volume pour stocker les réparations du garage, comme ça elles restent même si je supprime le conteneur.
     # Le fichier reparations.json est dans ce volume (projet1_garage-data), pas dans mon dossier de projet.
     # Pour le voir, il faut taper "docker compose exec back cat /app/data/reparations.json", ou Docker Desktop > Volumes > projet1_garage-data.
@@ -74,6 +80,9 @@ services:
         condition: service_healthy
     # J'ai mis restart pour que l'entrée de l'appli revienne toute seule si Nginx plante en pleine journée.
     restart: unless-stopped
+    # J'ai mis stop_grace_period pour laisser 10 s à Nginx pour finir les requêtes en cours avant le SIGKILL.
+    # Docker lui envoie SIGQUIT (STOPSIGNAL du Dockerfile) : Nginx arrête d'accepter des connexions puis quitte en douceur.
+    stop_grace_period: 10s
     # J'ai mis Nginx sur le réseau garage-network pour qu'il puisse parler au front et à l'API.
     networks:
       - garage-network
@@ -83,6 +92,24 @@ services:
     # J'ai limité la RAM à 32 Mo car Nginx a eu un pic à 12 Mo pendant mes benchmarks, ça laisse de la marge
     # sans prendre la mémoire du PC de l'atelier.
     mem_limit: ${NGINX_MEM:-32m}
+
+  # J'ai ajouté un service lint (CI) qui vérifie les Dockerfiles (hadolint), le script de l'autoscaler (shellcheck)
+  # et le code Node.js (eslint) avant de lancer l'appli. Il n'est pas lancé avec "docker compose up" (voir profiles) :
+  # il se lance à la demande avec "docker compose run --rm lint", fait son contrôle puis s'arrête.
+  lint:
+    build: ./lint
+    # J'ai mis un profil pour que "docker compose up" ne le démarre pas avec l'appli : ce n'est pas un service qui tourne en continu.
+    profiles: ["lint"]
+    # Je monte le projet en lecture seule (ro) : le lint lit les fichiers sans pouvoir les modifier.
+    volumes:
+      - ./:/src:ro
+    # Le lint n'a pas besoin de réseau : il lit seulement des fichiers.
+    network_mode: none
+    # Pas de restart : quand le contrôle est fini, le conteneur doit rester arrêté (son code de sortie dit si c'est bon ou non).
+    restart: "no"
+    # J'ai limité à 0.5 CPU et 256 Mo car eslint (Node) consomme plus que l'appli, mais seulement quelques secondes.
+    cpus: ${LINT_CPUS:-0.5}
+    mem_limit: ${LINT_MEM:-256m}
 
 networks:
   # J'ai créé un réseau privé pour que les 3 parties de l'appli se parlent avec leur nom (front, back) sans être ouvertes sur le PC de l'atelier.

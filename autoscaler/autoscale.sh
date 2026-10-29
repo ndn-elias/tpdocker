@@ -26,6 +26,11 @@ COOLDOWN="${COOLDOWN:-60}"
 
 echo "Autoscaler démarré pour le stack ${STACK_NAME} : services [${SERVICES}], ${MIN_REPLICAS} à ${MAX_REPLICAS} replicas, seuils ${CPU_BAS}% / ${CPU_HAUT}%"
 
+# Docker envoie SIGTERM au conteneur à l'arrêt ("docker stack rm"). Ce script est le processus 1 du conteneur,
+# et sans trap le script n'a rien de prévu à l'arrêt : il serait interrompu n'importe où (code de sortie différent de 0).
+# Avec ce trap, le script affiche un message et quitte tout de suite.
+trap 'echo "$(date "+%H:%M:%S") - SIGTERM reçu, arrêt de l autoscaler"; exit 0' TERM INT
+
 while true; do
   MAINTENANT=$(date +%s)
 
@@ -52,6 +57,9 @@ while true; do
     # Je fais la moyenne du CPU des copies prêtes, puis je la ramène à la limite CPU du service.
     # docker stats donne le CPU en % d'un cœur (0.25 CPU à fond = 25 %), donc je divise par la limite (0.25).
     # Attention : docker stats ne voit que les conteneurs de cette machine, c'est suffisant car le garage n'a qu'un PC (un seul nœud Swarm).
+    # $PRETS n'a pas de guillemets exprès : il contient un nom de conteneur par ligne, et docker stats doit les recevoir
+    # comme plusieurs arguments séparés (shellcheck le signale avec SC2086, je le désactive pour cette ligne).
+    # shellcheck disable=SC2086
     CPU=$(docker stats --no-stream --format "{{.CPUPerc}}" $PRETS | awk -v limite="${LIMITE:-0}" '
       { gsub(/%/, "", $1); total += $1; n++ }
       END {
@@ -84,5 +92,8 @@ while true; do
     fi
   done
 
-  sleep "$INTERVALLE"
+  # Je lance sleep en arrière-plan puis j'attends avec "wait" : un trap ne s'exécute pas tant qu'une commande
+  # au premier plan tourne (le script resterait bloqué jusqu'à la fin du sleep), alors que "wait" est interrompu par le signal.
+  sleep "$INTERVALLE" &
+  wait $!
 done

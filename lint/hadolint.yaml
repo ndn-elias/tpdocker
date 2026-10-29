@@ -1,0 +1,10 @@
+# Règles de hadolint (le lint des Dockerfiles).
+
+# J'échoue à partir du niveau "warning" : les simples conseils de style ("info") ne bloquent pas.
+failure-threshold: warning
+
+ignored:
+  # DL3018 demande de fixer la version de chaque paquet installé avec "apk add" (docker-cli=29.0.0-r0 par exemple).
+  # Je l'ignore car ces versions changent à chaque version d'alpine et casseraient le build ;
+  # c'est la version d'alpine, fixée dans le FROM (alpine:3.21), qui rend le build reproductible.
+  - DL3018

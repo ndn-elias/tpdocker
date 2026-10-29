@@ -38,5 +38,10 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -qO- http://127.0.0.1:$PORT/api/reparations || exit 1
 
-# J'ai mis "node server.js" pour démarrer l'API du garage au lancement du conteneur, sans passer par npm car je n'ai pas de package.json.
+# J'ai mis STOPSIGNAL SIGTERM pour dire clairement à Docker quel signal envoyer à l'arrêt (c'est déjà la valeur par défaut) :
+# server.js l'attrape, finit les requêtes en cours puis quitte.
+STOPSIGNAL SIGTERM
+
+# J'ai mis "node server.js" (forme exec, avec des crochets) pour que node soit le processus 1 du conteneur et reçoive SIGTERM directement,
+# sans passer par npm car je n'ai pas de package.json.
 CMD ["node", "server.js"]

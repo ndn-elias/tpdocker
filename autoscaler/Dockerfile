@@ -13,5 +13,9 @@ COPY --chmod=755 autoscale.sh /autoscale.sh
 # Je n'ai pas mis USER car le script doit parler au socket Docker, qui n'est accessible qu'en root.
 # C'est pour ça que dans docker-stack.yml l'autoscaler tourne seulement sur le nœud manager.
 
-# J'ai mis le script en CMD pour que l'autoscaler commence à surveiller l'appli dès le lancement du conteneur.
+# J'ai mis STOPSIGNAL SIGTERM (la valeur par défaut) : autoscale.sh l'attrape avec un "trap" et quitte tout de suite.
+STOPSIGNAL SIGTERM
+
+# J'ai mis le script en CMD (forme exec) pour que l'autoscaler commence à surveiller l'appli dès le lancement du conteneur,
+# et que le script soit le processus 1 du conteneur : il reçoit SIGTERM directement, sans shell entre les deux.
 CMD ["/autoscale.sh"]

@@ -19,7 +19,7 @@ if (!fs.existsSync(DATA_FILE)) {
   ], null, 2));
 }
 
-http.createServer((req, res) => {
+const server = http.createServer((req, res) => {
   // Pour GET /api/reparations, on lit le fichier JSON et on renvoie les réparations
   if (req.url === "/api/reparations") {
     res.setHeader("Content-Type", "application/json");
@@ -30,4 +30,18 @@ http.createServer((req, res) => {
   }
 
   res.end("Hello World depuis le back (API du garage moto)");
-}).listen(PORT);
+});
+
+server.listen(PORT);
+
+// Docker envoie SIGTERM au conteneur quand on fait "docker compose stop" ou "docker stack rm" (ou qu'une copie est enlevée).
+// Node est le processus 1 du conteneur : sans ce code, il n'a rien de prévu à l'arrêt et Docker doit le tuer (SIGKILL).
+// Ici on arrête d'accepter de nouvelles connexions, on laisse finir les requêtes en cours, puis on quitte proprement.
+function arret(signal) {
+  console.log(`${signal} reçu, arrêt de l'API`);
+  server.close(() => process.exit(0));
+  // Les connexions gardées ouvertes mais sans requête en cours ne doivent pas bloquer l'arrêt
+  server.closeIdleConnections();
+}
+process.on("SIGTERM", () => arret("SIGTERM"));
+process.on("SIGINT", () => arret("SIGINT"));

@@ -10,8 +10,8 @@ ENV PORT=3000
 # J'ai choisi /app comme dossier de travail pour ranger le code de mon front au même endroit, et WORKDIR le crée pour moi.
 WORKDIR /app
 
-# J'ai copié package.json car il contient le script "start" que lance mon CMD (npm start) pour démarrer le front.
-COPY --chown=node:node package.json .
+# Je n'ai pas copié package.json : mon CMD lance node directement, donc je n'ai pas besoin du script "start" de npm
+# (il reste dans le projet pour lancer le front à la main avec "npm start", hors Docker).
 # J'ai copié server.js car c'est lui qui affiche la liste des réparations aux mécaniciens.
 # J'ai mis --chown pour que les fichiers appartiennent à "node", l'utilisateur qui lance mon front.
 COPY --chown=node:node server.js .
@@ -28,5 +28,11 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -qO- http://127.0.0.1:$PORT/ || exit 1
 
-# J'ai mis "npm start" pour démarrer le front au lancement du conteneur, avec la commande écrite dans mon package.json.
-CMD ["npm", "start"]
+# J'ai mis STOPSIGNAL SIGTERM pour dire clairement à Docker quel signal envoyer à l'arrêt (c'est déjà la valeur par défaut) :
+# server.js l'attrape, finit les requêtes en cours puis quitte.
+STOPSIGNAL SIGTERM
+
+# J'ai mis "node server.js" (forme exec, avec des crochets) pour que node soit le processus 1 du conteneur et reçoive SIGTERM directement.
+# Avant j'avais "npm start" : npm lance node comme un sous-processus et ne lui transmet pas bien SIGTERM,
+# donc Docker finissait par tuer le conteneur (SIGKILL). En plus, ça enlève le processus npm (moins de RAM).
+CMD ["node", "server.js"]

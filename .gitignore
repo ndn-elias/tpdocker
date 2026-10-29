@@ -2,3 +2,6 @@
 back/data/
 # J'ai ignoré le .env car chaque garage a sa propre config (port, taille du PC), on pousse seulement .env.example
 .env
+# J'ai ignoré le dossier "AutoScale in Docker" car ce sont les exemples du cours : mon travail est dans autoscaler/ et docker-stack.yml,
+# et son swarm-stack.yml utilise une image Docker Hub (nginx:alpine) alors que mes images doivent toutes être personnalisées
+AutoScale in Docker/
