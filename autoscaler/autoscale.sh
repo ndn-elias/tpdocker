@@ -46,7 +46,7 @@ while true; do
     fi
 
     # Je prends seulement les copies "healthy" : une copie qui démarre utilise tout son CPU pendant quelques secondes
-    # (surtout le front avec npm), et sans ce filtre l'autoscaler ajoutait une copie dès le lancement du stack.
+    # (mesuré sur le front quand il passait encore par npm start), et sans ce filtre l'autoscaler ajoutait une copie dès le lancement du stack.
     # Swarm met le nom du service dans le label com.docker.swarm.service.name de chaque conteneur.
     PRETS=$(docker ps --filter "label=com.docker.swarm.service.name=${NOM}" --filter health=healthy --format '{{.Names}}')
     if [ -z "$PRETS" ]; then

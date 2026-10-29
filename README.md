@@ -175,7 +175,14 @@ par rapport à la version Hello World de base :
 
 - **Version fixée** : `node:22-alpine` et `nginx:1.27-alpine` au lieu de `nginx` tout court, pour
   avoir toujours la même image (et alpine car c'est plus léger)
-- **`ENV`** : `NODE_ENV=production`, le `PORT`, et pour le back le chemin `DATA_FILE` du JSON
+- **`ENV`** : `NODE_ENV=production` (mode que `server.js` lit : en `production` il est silencieux, en
+  `development` il affiche chaque requête dans les logs), le `PORT`, et pour le back le chemin
+  `DATA_FILE` du JSON
+- **`ARG APP_PORT`** : le port est donné au build par docker compose (valeur du `.env`) et sert à
+  `ENV PORT` et à `EXPOSE`. Comme ça `EXPOSE`, `PORT` (run) et la config de Nginx ont toujours le
+  même port. `EXPOSE` n'ouvre aucun port sur le PC : c'est seulement une indication, c'est `ports`
+  dans le compose qui publie. Nginx a `EXPOSE 80` fixe (il écoute toujours sur 80, c'est
+  `NGINX_PORT:80` qui choisit le port côté PC)
 - **`USER node`** : l'appli ne tourne pas en root (l'utilisateur `node` est déjà dans l'image)
 - **`COPY --chown=node:node`** : les fichiers appartiennent à l'utilisateur `node`
 - **`COPY` fichier par fichier** : on copie seulement ce qui est utile, pas tout le dossier
@@ -192,7 +199,8 @@ par rapport à la version Hello World de base :
 
 Toutes les instructions sont aussi commentées dans `docker-compose.yml`. Pour chaque conteneur :
 
-- `build` : le dossier où se trouve le Dockerfile
+- `build` : le dossier où se trouve le Dockerfile (et, pour le front et le back, l'argument
+  `APP_PORT` donné au build)
 - `restart: unless-stopped` : le conteneur redémarre tout seul s'il plante
 - `networks` : les 3 conteneurs sont sur le réseau `garage-network`, ils se parlent avec leur nom
   (`front`, `back`), c'est pour ça que dans `nginx.conf` j'écris `http://back:${APP_PORT}`
@@ -207,15 +215,15 @@ En plus :
   sont pas perdues quand on supprime le conteneur
 - `depends_on` avec `condition: service_healthy` : Nginx démarre seulement quand le front et le
   back sont prêts (grâce au healthcheck)
-- `stop_grace_period: 10s` : le temps que Docker attend après le signal d'arrêt avant de tuer le
-  conteneur (voir [Arrêt propre](#arrêt-propre-des-conteneurs-sigterm))
+- `stop_grace_period: ${STOP_GRACE_PERIOD:-5s}` : le temps que Docker attend après le signal d'arrêt
+  avant de tuer le conteneur (voir [Arrêt propre](#arrêt-propre-des-conteneurs-sigterm))
 - le service `lint` (profil `lint`) : voir [Le lint](#le-lint-ci)
 
 ## Arrêt propre des conteneurs (SIGTERM)
 
 Quand on fait `docker compose stop`, `docker compose down` ou `docker stack rm` (ou quand l'autoscaler
 enlève une copie), Docker envoie un signal au processus 1 de chaque conteneur, attend
-`stop_grace_period` (10 s), puis le tue (`SIGKILL`) s'il est encore là. Un processus qui n'attrape
+`stop_grace_period` (5 s dans ce projet), puis le tue (`SIGKILL`) s'il est encore là. Un processus qui n'attrape
 pas le signal n'a rien de prévu à l'arrêt : il est tué d'un coup (code de sortie 137 pour Node), et
 les requêtes en cours sont coupées. Je l'ai vérifié : un serveur Node sans handler est sorti avec le
 code 137, alors que le front et l'API de ce projet sortent avec le code 0.
@@ -226,6 +234,7 @@ code 137, alors que le front et l'API de ce projet sortent avec le code 0.
 | back | `SIGTERM` | Pareil que le front |
 | serveur-web | `SIGQUIT` | Nginx s'arrête « en douceur » avec ce signal (il finit les requêtes en cours). C'est le `STOPSIGNAL` de l'image nginx, je l'ai écrit dans mon Dockerfile pour que ce soit clair |
 | autoscaler | `SIGTERM` | `autoscale.sh` a un `trap` qui affiche un message et quitte. Sans `trap`, le script n'a rien de prévu à l'arrêt : il est interrompu n'importe où et sort avec un code différent de 0 |
+| lint | aucun | Je ne l'ai pas géré : le lint dure quelques secondes, s'arrête tout seul (`--rm`) et ne garde aucune donnée (le projet est monté en lecture seule). S'il est interrompu, Docker le tue sans conséquence |
 
 Ce que j'ai changé pour que ça marche :
 
@@ -236,8 +245,10 @@ Ce que j'ai changé pour que ça marche :
 - **l'autoscaler attend avec `sleep ... & wait $!`** au lieu d'un simple `sleep` : un `trap` ne
   s'exécute pas tant qu'une commande tourne au premier plan, alors que `wait` est interrompu par le
   signal
-- **`stop_grace_period: 10s`** est écrit dans `docker-compose.yml` et `docker-stack.yml` : c'est la
-  limite avant le `SIGKILL`. Les conteneurs quittent en moins d'une seconde, 10 s est une sécurité
+- **`stop_grace_period`** est écrit dans `docker-compose.yml` et `docker-stack.yml` (variable
+  `STOP_GRACE_PERIOD` du `.env`, **5 s** par défaut) : c'est la limite avant le `SIGKILL`. Les
+  conteneurs quittent en moins d'une seconde. J'ai choisi 5 s plutôt que les 10 s par défaut de
+  Docker : c'est assez pour finir une requête, sans attendre longtemps si un conteneur reste bloqué
 
 Pour le vérifier (conteneurs lancés), le message de `server.js` apparaît dans les logs et l'arrêt est
 rapide :
@@ -255,10 +266,19 @@ Toutes les valeurs qui peuvent changer d'un garage à l'autre sont dans le fichi
 |---|---|---|
 | `NGINX_PORT` | `8080` | Le changer si un autre logiciel du garage utilise déjà ce port |
 | `APP_PORT` | `3000` | Le port du front et de l'API, changé à un seul endroit pour les 3 conteneurs |
-| `NODE_ENV` | `production` | Passer en `development` pour corriger un bug, sans reconstruire les images |
+| `NODE_ENV` | `production` | Le mode lu par `server.js` : en `development`, le front et l'API affichent chaque requête dans les logs (`docker compose logs -f front back`), sans reconstruire les images |
+| `STOP_GRACE_PERIOD` | `5s` | Le temps que Docker attend après SIGTERM avant de tuer un conteneur (voir [Arrêt propre](#arrêt-propre-des-conteneurs-sigterm)) |
 | `FRONT_CPUS`, `BACK_CPUS`, `NGINX_CPUS` | `0.25` | Adapter les limites à la taille du PC de l'atelier |
 | `FRONT_MEM`, `BACK_MEM`, `NGINX_MEM` | `64m`, `32m`, `32m` | Adapter les limites à la taille du PC de l'atelier |
 | `LINT_CPUS`, `LINT_MEM` | `0.5`, `256m` | Les limites du conteneur de lint (eslint prend plus de ressources que l'appli, mais seulement quelques secondes) |
+| `AUTOSCALER_CPUS`, `AUTOSCALER_MEM` | `0.10`, `32m` | Les limites de l'autoscaler (Swarm seulement) : il lance quelques commandes `docker` toutes les 15 s, donc très peu |
+| `MIN_REPLICAS`, `MAX_REPLICAS` | `1`, `4` | Le nombre de copies minimum et maximum (Swarm seulement) |
+| `CPU_HAUT`, `CPU_BAS` | `80`, `20` | Les seuils de l'autoscaler, en % de la limite CPU d'un conteneur (Swarm seulement) |
+| `INTERVALLE`, `COOLDOWN` | `15`, `60` | Le temps entre deux mesures et l'attente après un changement, en secondes (Swarm seulement) |
+| `AUTOSCALE_SERVICES` | `front back serveur-web` | Les services que l'autoscaler peut multiplier (Swarm seulement) |
+
+Une seule variable n'est pas dans le `.env` : `STACK_NAME` (`garage`), fixée dans `deploy-swarm.bat`
+car le nom du stack sert dans les commandes de ce README (`garage_autoscaler`, `docker stack rm garage`).
 
 Comment les variables arrivent jusqu'aux conteneurs :
 
@@ -266,7 +286,8 @@ Comment les variables arrivent jusqu'aux conteneurs :
 2. dans `docker-compose.yml`, j'écris `${APP_PORT:-3000}` : ça prend la valeur du `.env`, ou `3000`
    si elle n'existe pas
 3. avec `environment:`, je passe à chaque conteneur seulement ce dont il a besoin (le front et l'API
-   reçoivent `PORT` et `NODE_ENV`, Nginx reçoit `APP_PORT`)
+   reçoivent `PORT` et `NODE_ENV`, Nginx reçoit `APP_PORT`). Pour le front et l'API, `APP_PORT` est
+   aussi donné au build (`build.args`) pour `EXPOSE`
 4. pour Nginx, la config est copiée dans `/etc/nginx/templates/` : au démarrage, l'image Nginx
    remplace `${APP_PORT}` dans la config par sa vraie valeur
 
@@ -441,7 +462,7 @@ En plus :
 - `hostname: "{{.Service.Name}}-{{.Task.Slot}}"` : un modèle Swarm, chaque copie a son nom
   (`garage_front-1`, `garage_front-2`...). La page `/app/` affiche quelle copie du front et quelle
   copie de l'API ont répondu
-- Nginx écrit toujours `http://front:3000` : en Swarm, `front` est une adresse virtuelle (VIP) et
+- Nginx écrit toujours `http://front:${APP_PORT}` (3000 par défaut) : en Swarm, `front` est une adresse virtuelle (VIP) et
   Swarm répartit les requêtes entre toutes les copies, Nginx n'a pas besoin de les connaître
 
 ### L'autoscaler
@@ -451,8 +472,9 @@ au socket Docker (`/var/run/docker.sock`), donc il tourne seulement sur le manag
 de l'appli et sans port ouvert. Toutes les 15 secondes, pour le front, l'API et Nginx :
 
 1. il lit le CPU de chaque copie **prête** (`healthy`) avec `docker stats`. Une copie qui démarre
-   est ignorée : au lancement, le front (avec `npm`) utilise tout son CPU pendant quelques secondes,
-   et sans ce filtre l'autoscaler ajoutait une copie dès le démarrage du stack
+   est ignorée : au lancement, un conteneur utilise beaucoup de CPU pendant quelques secondes (je
+   l'avais mesuré sur le front, quand il passait encore par `npm start`), et sans ce filtre
+   l'autoscaler ajoutait une copie dès le démarrage du stack
 2. il fait la moyenne et la ramène à la limite du service : `docker stats` donne le CPU en % d'un
    cœur, donc une copie à fond avec 0.25 CPU affiche 25 %, ce qui fait **100 % de sa limite**
 3. au-dessus de **80 %** il ajoute une copie, en dessous de **20 %** il en enlève une
@@ -521,5 +543,8 @@ Ce que j'en conclus :
   restent sur l'ancienne copie (l'équilibreur de Swarm, IPVS, garde les connexions qu'il connaît).
   Les nouveaux mécaniciens qui se connectent sont bien répartis sur toutes les copies
 - **Au démarrage**, sans le filtre `healthy`, l'autoscaler ajoutait une copie du front pour rien car
-  `npm` utilise tout le CPU pendant quelques secondes au lancement
+  il utilisait tout son CPU pendant quelques secondes au lancement (à l'époque, avec `npm start`)
+
+Ce test a été fait avant que je change le `CMD` du front (`npm start` puis `node server.js`, pour
+gérer SIGTERM). Le front consomme un peu moins depuis, ça ne change pas la logique de l'autoscaler.
 

@@ -8,6 +8,9 @@ const os = require("os");
 // Le port et le chemin du fichier viennent des variables d'environnement (définies dans le Dockerfile)
 const PORT = process.env.PORT || 3000;
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data", "reparations.json");
+// Le mode vient de NODE_ENV : en "production" l'API est silencieuse, sinon (par exemple "development")
+// elle affiche chaque requête dans les logs, pour corriger un bug sans reconstruire l'image
+const MODE = process.env.NODE_ENV || "production";
 
 // Si le fichier n'existe pas encore (premier lancement), on le crée avec des réparations d'exemple
 // Dans Docker, il est créé dans le volume projet1_garage-data (pas dans le dossier du projet)
@@ -20,6 +23,7 @@ if (!fs.existsSync(DATA_FILE)) {
 }
 
 const server = http.createServer((req, res) => {
+  if (MODE !== "production") console.log(`${req.method} ${req.url}`);
   // Pour GET /api/reparations, on lit le fichier JSON et on renvoie les réparations
   if (req.url === "/api/reparations") {
     res.setHeader("Content-Type", "application/json");
@@ -32,7 +36,7 @@ const server = http.createServer((req, res) => {
   res.end("Hello World depuis le back (API du garage moto)");
 });
 
-server.listen(PORT);
+server.listen(PORT, () => console.log(`API démarrée sur le port ${PORT} (mode ${MODE}), réparations dans ${DATA_FILE}`));
 
 // Docker envoie SIGTERM au conteneur quand on fait "docker compose stop" ou "docker stack rm" (ou qu'une copie est enlevée).
 // Node est le processus 1 du conteneur : sans ce code, il n'a rien de prévu à l'arrêt et Docker doit le tuer (SIGKILL).

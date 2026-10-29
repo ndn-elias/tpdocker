@@ -6,7 +6,11 @@ services:
   # J'ai fait un service front pour afficher la liste des réparations aux mécaniciens.
   front:
     # J'ai mis build ./front pour que Docker construise l'image du front avec mon Dockerfile.
-    build: ./front
+    build:
+      context: ./front
+      # J'ai passé APP_PORT en argument du build pour que EXPOSE (dans le Dockerfile) ait le même port que PORT et que Nginx.
+      args:
+        APP_PORT: ${APP_PORT:-3000}
     # Je n'ai pas mis de "ports" car je veux que les mécaniciens passent par Nginx, pas directement par le front.
     # J'ai passé au front seulement les variables dont il a besoin, prises dans le .env.
     environment:
@@ -16,9 +20,10 @@ services:
       PORT: ${APP_PORT:-3000}
     # J'ai mis restart pour que la liste des réparations revienne toute seule si le conteneur plante en pleine journée.
     restart: unless-stopped
-    # J'ai mis stop_grace_period pour dire combien de temps Docker attend après SIGTERM avant de tuer le conteneur (SIGKILL).
-    # Le front quitte en moins d'une seconde (il attrape SIGTERM dans server.js), 10 s c'est donc une sécurité, pas une attente normale.
-    stop_grace_period: 10s
+    # J'ai mis stop_grace_period pour dire combien de temps Docker attend après SIGTERM avant de tuer le conteneur (SIGKILL) : 5 s par défaut,
+    # modifiable avec STOP_GRACE_PERIOD dans le .env (10 s est la valeur par défaut de Docker, trop longue pour des conteneurs qui quittent vite).
+    # Le front quitte en moins d'une seconde (il attrape SIGTERM dans server.js), 5 s c'est donc une sécurité, pas une attente normale.
+    stop_grace_period: ${STOP_GRACE_PERIOD:-5s}
     # J'ai mis le front sur le réseau garage-network pour que Nginx puisse lui envoyer les mécaniciens.
     networks:
       - garage-network
@@ -32,7 +37,11 @@ services:
   # J'ai fait un service back pour l'API qui gère les réparations du garage.
   back:
     # J'ai mis build ./back pour que Docker construise l'image de l'API avec mon Dockerfile.
-    build: ./back
+    build:
+      context: ./back
+      # J'ai passé APP_PORT en argument du build pour que EXPOSE (dans le Dockerfile) ait le même port que PORT et que Nginx.
+      args:
+        APP_PORT: ${APP_PORT:-3000}
     # Je n'ai pas mis de "ports" car l'API contient les infos des clients donc personne ne doit y accéder sans passer par Nginx.
     # J'ai passé à l'API seulement les variables dont elle a besoin, prises dans le .env.
     # Je n'ai pas mis DATA_FILE dans le .env car le chemin doit rester dans le volume, sinon les réparations seraient perdues.
@@ -43,9 +52,9 @@ services:
       PORT: ${APP_PORT:-3000}
     # J'ai mis restart pour que l'API revienne toute seule si elle plante, sinon les mécaniciens ne voient plus leurs réparations.
     restart: unless-stopped
-    # J'ai mis stop_grace_period pour laisser 10 s à l'API pour finir ses requêtes en cours après SIGTERM, avant le SIGKILL.
+    # J'ai mis stop_grace_period pour laisser 5 s à l'API pour finir ses requêtes en cours après SIGTERM, avant le SIGKILL.
     # Elle attrape SIGTERM dans server.js, donc elle quitte en moins d'une seconde.
-    stop_grace_period: 10s
+    stop_grace_period: ${STOP_GRACE_PERIOD:-5s}
     # J'ai mis un volume pour stocker les réparations du garage, comme ça elles restent même si je supprime le conteneur.
     # Le fichier reparations.json est dans ce volume (projet1_garage-data), pas dans mon dossier de projet.
     # Pour le voir, il faut taper "docker compose exec back cat /app/data/reparations.json", ou Docker Desktop > Volumes > projet1_garage-data.
@@ -80,9 +89,9 @@ services:
         condition: service_healthy
     # J'ai mis restart pour que l'entrée de l'appli revienne toute seule si Nginx plante en pleine journée.
     restart: unless-stopped
-    # J'ai mis stop_grace_period pour laisser 10 s à Nginx pour finir les requêtes en cours avant le SIGKILL.
+    # J'ai mis stop_grace_period pour laisser 5 s à Nginx pour finir les requêtes en cours avant le SIGKILL.
     # Docker lui envoie SIGQUIT (STOPSIGNAL du Dockerfile) : Nginx arrête d'accepter des connexions puis quitte en douceur.
-    stop_grace_period: 10s
+    stop_grace_period: ${STOP_GRACE_PERIOD:-5s}
     # J'ai mis Nginx sur le réseau garage-network pour qu'il puisse parler au front et à l'API.
     networks:
       - garage-network

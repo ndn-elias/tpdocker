@@ -36,8 +36,11 @@
   <text x="155" y="67" class="orange">NGINX_PORT=8080</text>
   <text x="155" y="89" class="orange">APP_PORT=3000</text>
   <text x="155" y="111" class="orange">NODE_ENV=production</text>
-  <text x="155" y="133" class="orange">limites CPU / RAM</text>
+  <text x="155" y="133" class="orange">CPU / RAM · arrêt (5 s)</text>
   <text x="155" y="155" class="orange">seuils de l'autoscaler</text>
+
+  <text x="815" y="40" class="orange">chiffres affichés =</text>
+  <text x="815" y="62" class="orange">valeurs par défaut du .env</text>
 
   <!-- Utilisateur -->
   <g filter="url(#rough)">
@@ -67,7 +70,7 @@
     <path d="M 540 370 Q 620 430 730 442"/>
     <path d="M 613 670 L 550 670"/>
   </g>
-  <text x="495" y="165" class="green" style="text-anchor: start">:8080</text>
+  <text x="495" y="165" class="green" style="text-anchor: start">:8080 (NGINX_PORT)</text>
   <text x="290" y="385" class="green">/app/</text>
   <text x="590" y="392" class="green">/api/</text>
 
@@ -93,7 +96,7 @@
   <text x="775" y="277" class="blue">env : APP_PORT</text>
   <text x="775" y="299" class="blue">healthcheck · restart</text>
   <text x="775" y="321" class="blue">compose : attend front + back</text>
-  <text x="775" y="343" class="blue">SIGQUIT → arrêt en douceur</text>
+  <text x="775" y="343" class="blue">SIGQUIT → doux (5 s max)</text>
   <text x="775" y="365" class="blue">port 80 · 0.25 CPU · 32 Mo</text>
   <text x="775" y="387" class="blue">Swarm : 1 à 4 copies</text>
 
@@ -105,10 +108,10 @@
   <text x="220" y="496" class="title">Front</text>
   <text x="220" y="520" class="sub">node:22-alpine</text>
   <text x="220" y="618" class="blue">Liste des réparations</text>
-  <text x="220" y="640" class="blue">port 3000 · non publié</text>
+  <text x="220" y="640" class="blue">APP_PORT (3000) · non publié</text>
   <text x="220" y="662" class="blue">env : PORT, NODE_ENV</text>
   <text x="220" y="684" class="blue">user node · healthcheck</text>
-  <text x="220" y="706" class="blue">restart: unless-stopped</text>
+  <text x="220" y="706" class="blue">redémarrage automatique</text>
   <text x="220" y="728" class="blue">SIGTERM → arrêt propre</text>
   <text x="220" y="750" class="blue">0.25 CPU · 64 Mo</text>
   <text x="220" y="772" class="blue">Swarm : 1 à 4 copies</text>
@@ -121,10 +124,10 @@
   <text x="740" y="496" class="title">Back</text>
   <text x="740" y="520" class="sub">node:22-alpine</text>
   <text x="740" y="618" class="blue">API /api/reparations</text>
-  <text x="740" y="640" class="blue">port 3000 · non publié</text>
+  <text x="740" y="640" class="blue">APP_PORT (3000) · non publié</text>
   <text x="740" y="662" class="blue">env : PORT, NODE_ENV</text>
   <text x="740" y="684" class="blue">user node · healthcheck</text>
-  <text x="740" y="706" class="blue">restart: unless-stopped</text>
+  <text x="740" y="706" class="blue">redémarrage automatique</text>
   <text x="740" y="728" class="blue">SIGTERM → arrêt propre</text>
   <text x="740" y="750" class="blue">0.25 CPU · 32 Mo</text>
   <text x="740" y="772" class="blue">Swarm : 1 à 4 copies</text>

@@ -12,7 +12,8 @@ COPY nginx.conf /etc/nginx/templates/default.conf.template
 # J'ai copié index.html car c'est la page d'accueil du garage, avec les liens vers la liste des réparations.
 COPY index.html /usr/share/nginx/html/index.html
 
-# J'ai mis EXPOSE 80 car c'est le port par lequel les mécaniciens entrent dans l'appli du garage.
+# J'ai mis EXPOSE 80 car c'est le port sur lequel Nginx écoute (listen 80 dans nginx.conf), il ne change jamais :
+# c'est "ports" dans le compose (NGINX_PORT:80) qui choisit le port côté PC (8080 par défaut).
 EXPOSE 80
 
 # J'ai mis un healthcheck pour que Docker sache si l'entrée de l'appli répond vraiment, et pas seulement si le conteneur est allumé.

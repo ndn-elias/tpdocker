@@ -34,9 +34,8 @@ USER node
 # J'ai mis /src comme dossier de travail : c'est là que docker-compose.yml monte le projet (en lecture seule).
 WORKDIR /src
 
-# J'ai mis STOPSIGNAL SIGTERM (la valeur par défaut) : lint.sh ne dure que quelques secondes, mais si on l'arrête avec Ctrl+C
-# le conteneur doit quitter tout de suite.
-STOPSIGNAL SIGTERM
+# Je n'ai pas géré SIGTERM ici : le lint ne dure que quelques secondes, il s'arrête tout seul, et ne garde aucune donnée
+# (le projet est monté en lecture seule). Si on l'interrompt, Docker le tue sans conséquence.
 
 # J'ai mis le script en CMD (forme exec) pour que le lint démarre dès qu'on lance le conteneur.
 # Son code de sortie vaut 0 si tout est bon et 1 s'il y a une erreur, comme ça il peut bloquer une CI.

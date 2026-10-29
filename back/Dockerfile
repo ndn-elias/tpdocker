@@ -1,10 +1,14 @@
 # J'ai choisi node:22-alpine car l'API du garage est écrite en Node.js, et alpine garde l'image légère pour le petit PC de l'atelier.
 FROM node:22-alpine
 
-# J'ai mis NODE_ENV=production car l'API est utilisée tous les jours par les mécaniciens, ce n'est pas une version de test.
+# J'ai mis NODE_ENV=production car l'API est utilisée tous les jours par les mécaniciens : dans ce mode, server.js n'affiche
+# pas chaque requête dans les logs (avec NODE_ENV=development, il les affiche pour corriger un bug).
 ENV NODE_ENV=production
-# J'ai mis le port dans une variable pour pouvoir le changer sans modifier le code de mon API (le .env peut le remplacer).
-ENV PORT=3000
+# J'ai mis APP_PORT en ARG (argument du build) car EXPOSE ne peut pas lire une variable d'environnement du run : docker compose
+# lui donne la valeur du .env au build, comme ça EXPOSE, PORT et la config de Nginx ont toujours le même port.
+ARG APP_PORT=3000
+# J'ai mis le port dans une variable pour pouvoir le changer sans modifier le code de mon API (le .env peut le remplacer au run).
+ENV PORT=${APP_PORT}
 # J'ai mis le chemin du fichier des réparations dans une variable pour que mon API sache où lire reparations.json.
 ENV DATA_FILE=/app/data/reparations.json
 
@@ -28,8 +32,9 @@ USER node
 # Pour le voir, il faut taper "docker compose exec back cat /app/data/reparations.json", ou Docker Desktop > Volumes > projet1_garage-data.
 VOLUME ["/app/data"]
 
-# J'ai mis EXPOSE 3000 pour noter le port de mon API, c'est celui que Nginx utilise pour lui envoyer les requêtes /api/.
-EXPOSE 3000
+# J'ai mis EXPOSE pour noter le port de mon API, c'est celui que Nginx utilise pour lui envoyer les requêtes /api/.
+# EXPOSE n'ouvre aucun port sur le PC (c'est "ports" dans le compose qui le fait), c'est juste une indication.
+EXPOSE ${APP_PORT}
 
 # J'ai mis un healthcheck pour que Docker sache si l'API répond vraiment, et pas seulement si le conteneur est allumé :
 # si elle ne répond plus, les mécaniciens ne voient plus leurs réparations.

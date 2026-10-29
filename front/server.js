@@ -5,6 +5,9 @@ const os = require("os");
 
 // Le port vient de la variable d'environnement PORT (définie dans le Dockerfile)
 const PORT = process.env.PORT || 3000;
+// Le mode vient de NODE_ENV : en "production" le front est silencieux, sinon (par exemple "development")
+// il affiche chaque requête dans les logs, pour corriger un bug sans reconstruire l'image
+const MODE = process.env.NODE_ENV || "production";
 
 const page = `<!DOCTYPE html>
 <html lang="fr">
@@ -32,11 +35,12 @@ const page = `<!DOCTYPE html>
 </html>`;
 
 const server = http.createServer((req, res) => {
+  if (MODE !== "production") console.log(`${req.method} ${req.url}`);
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(page);
 });
 
-server.listen(PORT);
+server.listen(PORT, () => console.log(`Front démarré sur le port ${PORT} (mode ${MODE})`));
 
 // Docker envoie SIGTERM au conteneur quand on fait "docker compose stop" ou "docker stack rm" (ou qu'une copie est enlevée).
 // Node est le processus 1 du conteneur : sans ce code, il n'a rien de prévu à l'arrêt et Docker doit le tuer (SIGKILL).
